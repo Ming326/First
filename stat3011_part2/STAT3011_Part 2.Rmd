@@ -1,0 +1,659 @@
+# Introduction
+
+This project is based on the "Diabetes.csv" dataset, which contains multiple physiological indicators related to diabetes.
+
+Our study has two main objectives:
+
+1\. We use **binary logistic regression** to explore the relationships between different variables and diabetes, and to identify significant risk factors.
+
+2\. We build a **decision tree** model to evaluate the effectiveness of diabetes prediction.
+
+However, since the dataset contains missing values, we applied four imputation methods— **KNN, linear interpolation, missForest, and MICE,** to preprocess the data, and then compared whether the conclusions for the two research questions remain consistent under different imputation approaches.
+
+# Data pre-processing and visualization
+
+## Install and load necessary libraries.
+
+```{r}
+#install.packages("naniar")
+#install.packages("VIM")
+#install.packages("tidymodels")
+#install.packages("rpart)
+#install.packages("furrr", type = "binary")
+#install.packages("rsample")
+options(warn = -1)
+set.seed(123)
+library(rsample)
+library(ggplot2)
+library(naniar)
+library(VIM)
+library(simputation)
+library(tidymodels)
+library(rpart)
+library(dplyr)
+library(boot)
+library(randomForest)
+library(yardstick)
+```
+
+## Load the dataset and check basic information.
+
+```{r}
+# load the dataset
+filepath = '/Users/caiqingming/Desktop/Diabetes.csv'
+df <- read.csv(filepath, header = TRUE)
+# replace all the "NA" values of the "Pregnancies" variable with zeros
+df$Pregnancies[is.na(df$Pregnancies)] <- 0
+# convert "Diabetes" variable into factor
+df$Diabetes <- factor(df$Diabetes)
+# check dimensions
+dim(df)
+# print first six rows
+head(df)
+```
+
+## Check and visualize missing values and proportions.
+
+```{r}
+# count missing values for each variable
+cat("=== Missing value count per column ===\n")
+df %>%
+  is.na() %>%
+  colSums()
+# calculate missing percentage
+cat("=== Missing value percentage per column ===\n")
+missing_percent <- colMeans(is.na(df)) * 100
+print(round(missing_percent, 2))
+```
+
+```{r}
+# visualize missing patterns
+gg_miss_var(df)
+```
+
+```{r}
+# visualize missing patterns
+df %>% aggr(combined = TRUE ,numbers = TRUE, cex.axis = 0.75, cex.numbers = 0.7, oma = c(10, 5, 5, 2))
+```
+
+# Identify missing data mechanisms
+
+**Task1**: test if the percentage of missing values in one variable differs for people with or without diabetes.
+
+## Visualize missing values vs. Diabetes.
+
+```{r}
+# check missing in Insulin vs Diabetes
+df %>% select(Diabetes, Insulin) %>% spineMiss()
+
+# check missing in SkinThickness vs Diabetes
+df %>% select(Diabetes, SkinThickness) %>% spineMiss()
+
+# check missing in BloodPressure vs Diabetes
+df %>% select(Diabetes, BloodPressure) %>% spineMiss()
+
+# check missing in Glucose vs Diabetes
+df %>% select(Diabetes, Glucose) %>% spineMiss()
+
+# check missing in BMI vs Diabetes
+df %>% select(Diabetes, BMI) %>% spineMiss()
+```
+
+## Perform Chi-square tests on missing values vs. Diabetes.
+
+```{r}
+# create dummy variables for missing values
+df <- df %>% 
+  mutate(
+    missing_insulin = is.na(Insulin),
+    missing_skinthickness = is.na(SkinThickness),
+    missing_bloodpressure = is.na(BloodPressure),
+    missing_bmi = is.na(BMI),
+    missing_glucose = is.na(Glucose)
+  )
+```
+
+### Insulin missing vs. Diabetes
+
+```{r}
+table_insulin <- table(df$missing_insulin, df$Diabetes)
+cat("=== Contingency Table: Insulin missing vs Diabetes ===\n")
+print(table_insulin)
+
+# Chi-square test
+cat("\n=== Chi-square Test ===\n")
+chisq.test(table_insulin)
+```
+
+### SkinThickness missing vs. Diabetes
+
+```{r}
+table_skin <- table(df$missing_skinthickness, df$Diabetes)
+cat("\n=== Contingency Table: SkinThickness missing vs Diabetes ===\n")
+print(table_skin)
+
+cat("\n=== Chi-square Test ===\n")
+chisq.test(table_skin)
+```
+
+### BloodPressure missing vs. Diabetes
+
+```{r}
+table_bp <- table(df$missing_bloodpressure, df$Diabetes)
+cat("\n=== Contingency Table: BloodPressure missing vs Diabetes ===\n")
+print(table_bp)
+
+cat("\n=== Chi-square Test ===\n")
+chisq.test(table_bp)
+```
+
+### BMI missing vs. Diabetes
+
+```{r}
+table_bmi <- table(df$missing_bmi, df$Diabetes)
+cat("\n=== Contingency Table: BMI missing vs Diabetes ===\n")
+print(table_bmi)
+
+cat("\n=== Chi-square Test ===\n")
+chisq.test(table_bmi)
+```
+
+From results of Chi-square tests, we conclude that there is no significant relationship between missing values and Diabetes.
+
+**Task2**: test if the percentage of missing values in one variable differs for different values of another continuous variable?
+
+## Visualize missing values vs. continuous variables.
+
+```{r}
+# SkinThickness missing vs Age
+marginplot(df[, c("Age", "SkinThickness")], 
+           main = "Age vs SkinThickness Missing Pattern")
+
+# SkinThickness missing vs BMI
+marginplot(df[, c("BMI", "SkinThickness")], 
+           main = "BMI vs SkinThickness Missing Pattern")
+
+# Insulin missing vs Age
+marginplot(df[, c("Age", "Insulin")], 
+           main = "Age vs Insulin Missing Pattern")
+
+# Insulin missing vs BMI
+marginplot(df[, c("BMI", "Insulin")], 
+           main = "BMI vs Insulin Missing Pattern")
+
+# BMI missing vs Glucose
+marginplot(df[, c("Glucose", "BMI")], 
+           main = "Glucose vs BMI Missing Pattern")
+```
+
+## Perform t-test to verify missing values vs. continuous variables.
+
+```{r}
+# SkinThickness missing vs Age
+missing_skin_age <- df %>% filter(missing_skinthickness == TRUE) %>% pull(Age)
+complete_skin_age <- df %>% filter(missing_skinthickness == FALSE) %>% pull(Age)
+t.test(missing_skin_age, complete_skin_age)
+
+# SkinThickness missing vs BMI
+missing_skin_bmi <- df %>% filter(missing_skinthickness == TRUE) %>% pull(BMI)
+complete_skin_bmi <- df %>% filter(missing_skinthickness == FALSE) %>% pull(BMI)
+t.test(missing_skin_bmi, complete_skin_bmi)
+
+# Insulin missing vs Age
+missing_insulin_age <- df %>% filter(missing_insulin == TRUE) %>% pull(Age)
+complete_insulin_age <- df %>% filter(missing_insulin == FALSE) %>% pull(Age)
+t.test(missing_insulin_age, complete_insulin_age)
+
+# Insulin missing vs BMI
+missing_insulin_bmi <- df %>% filter(missing_insulin == TRUE) %>% pull(BMI)
+complete_insulin_bmi <- df %>% filter(missing_insulin == FALSE) %>% pull(BMI)
+t.test(missing_insulin_bmi, complete_insulin_bmi)
+
+# BMI missing vs Glucose
+missing_bmi_glucose <- df %>% filter(missing_bmi == TRUE) %>% pull(Glucose)
+complete_bmi_glucose <- df %>% filter(missing_bmi == FALSE) %>% pull(Glucose)
+t.test(missing_bmi_glucose, complete_bmi_glucose)
+```
+
+For brevity, we only show tests with statistically significant results. All five tests show statistically significant differences (p \< 0.05).
+
+**Result**:
+
+(1) SkinThickness missing group has higher Age and lower BMI
+
+(2) Insulin missing group has higher Age and lower BMI
+
+(3) BMI missing group has lower Glucose
+
+Since missing values are related to observed variables (Age, BMI, Glucose), the missing data mechanisms for **SkinThickness, Insulin and BMI** are **MAR** (Missing At Random).
+
+To supplement the variable-specific t-tests, we performed **Little's MCAR test** to assess the global missing data pattern.
+
+```{r}
+df_original <- read.csv(filepath, header = TRUE)
+mcar_test(df_original)
+```
+
+**Conclusion**: The result (p \< 0.05) rejects the MCAR hypothesis, confirming **a Missing at Random (MAR) mechanism** and justifying the use of imputation methods below.
+
+# Perform different imputation methods.
+
+## Perform KNN imputations
+
+### Normalize numeric columns
+
+```{r}
+# identify numeric columns
+num_cols <- names(df)[sapply(df, is.numeric)]
+
+# normalize (min-max scaling)
+mins <- sapply(df[num_cols], min, na.rm = TRUE)
+maxs <- sapply(df[num_cols], max, na.rm = TRUE)
+
+df_scaled <- df
+for (col in num_cols) {
+  df_scaled[[col]] <- (df_scaled[[col]] - mins[col]) / (maxs[col] - mins[col])
+}
+```
+
+### Hyperparameter tuning for K in KNN
+
+```{r}
+# identify columns with missing values
+target_vars <- names(which(colSums(is.na(df_scaled)) > 0))
+
+# extract complete cases
+df_complete <- df_scaled[complete.cases(df_scaled), ]
+
+# define parameter grid
+k_grid <- seq(1, 141, by = 6)
+n_repeats <- 10
+
+# store RMSE for each K
+rmse_sum <- rep(0, length(k_grid))
+
+# repeated masking and evaluation
+for (rep in 1:n_repeats) {
+  set.seed(123 + rep)
+  
+  # mask 10% of complete data
+  mask_idx <- sample(1:nrow(df_complete), nrow(df_complete) * 0.1)
+  df_masked <- df_complete
+  true_vals <- as.matrix(df_complete[mask_idx, target_vars])
+  df_masked[mask_idx, target_vars] <- NA
+  
+  # evaluate each K
+  for (i in seq_along(k_grid)) {
+    imp_tmp <- kNN(df_masked, k = k_grid[i], imp_var = FALSE)
+    pred_vals <- as.matrix(imp_tmp[mask_idx, target_vars])
+    rmse_sum[i] <- rmse_sum[i] + sqrt(mean((pred_vals - true_vals) ^ 2, na.rm = TRUE))
+  }
+}
+
+# calculate average RMSE across repeats
+mean_rmse <- rmse_sum / n_repeats
+
+best_k <- k_grid[which.min(mean_rmse)]
+print(best_k)
+
+# Visualize results
+tune_df <- data.frame(K = k_grid, RMSE = mean_rmse)
+
+ggplot(tune_df, aes(x = K, y = RMSE)) +
+  geom_line(color = "steelblue") +
+  geom_point(color = "red") +
+  geom_vline(xintercept = best_k, linetype = "dashed") +
+  labs(x = "K", y = "RMSE", title = paste("Best K =", best_k))
+```
+
+**Conclusion**: According to the tuning plot, we observe two critical points:
+
+(1) **The elbow point (K=7)** where the error drop stabilizes. We choose this to preserve local data structure.
+
+(2) **The global minimum (K=103)** where the RMSE is lowest due to maximum smoothing.
+
+We will compare the effects of choosing different values of K.
+
+### Perform KNN imputations with the chosen K.
+
+```{r}
+# K = 7
+# sort variables by number of missing values
+vars_by_NAs <- df_scaled %>% 
+  is.na() %>% 
+  colSums() %>% 
+  sort(decreasing = FALSE) %>% 
+  names()
+# perform imputations
+df_scaled_imp_1 <- df_scaled %>% 
+  select(all_of(vars_by_NAs)) %>% 
+  kNN(k = 7, imp_var = TRUE)
+
+# reverse to original scale
+df_imp_1 <- df_scaled_imp_1
+for (col in num_cols) {
+  df_imp_1[[col]] <- df_scaled_imp_1[[col]] * (maxs[col] - mins[col]) + mins[col]
+}
+
+# visualize imputations
+df_imp_1 %>% 
+  select(Glucose, Insulin, Insulin_imp) %>% 
+  marginplot(delimiter = "_imp", 
+             main = "KNN Imputation Results (K=7) - Insulin",
+             col = c("skyblue", "orange"))
+
+# check is there are no missing values
+colSums(is.na(df_imp_1))
+# remove extra columns
+df_original <- read.csv(filepath, header = TRUE)
+df_imp_1 <- df_imp_1[names(df_original)]
+```
+
+```{r}
+# K = 103
+# sort variables by number of missing values
+vars_by_NAs <- df_scaled %>% 
+  is.na() %>% 
+  colSums() %>% 
+  sort(decreasing = FALSE) %>% 
+  names()
+# perform imputations
+df_scaled_imp_2 <- df_scaled %>% 
+  select(all_of(vars_by_NAs)) %>% 
+  kNN(k = 103, imp_var = TRUE)
+
+# reverse to original scale
+df_imp_2 <- df_scaled_imp_2
+for (col in num_cols) {
+  df_imp_2[[col]] <- df_scaled_imp_2[[col]] * (maxs[col] - mins[col]) + mins[col]
+}
+
+# visualize imputations
+df_imp_2 %>% 
+  select(Glucose, Insulin, Insulin_imp) %>% 
+  marginplot(delimiter = "_imp", 
+             main = "KNN Imputation Results (K=103) - Insulin",
+             col = c("skyblue", "orange"))
+
+# check is there are no missing values
+colSums(is.na(df_imp_2))
+# remove extra columns
+df_original <- read.csv(filepath, header = TRUE)
+df_imp_2 <- df_imp_2[names(df_original)]
+```
+
+### Apply logistic regression to identify diabetes risk factors.
+
+#### When K = 7
+
+```{r}
+# K = 7
+# fit logistic regression
+model1 <- glm(Diabetes ~ ., 
+             data = df_imp_1, 
+             family = binomial)
+
+summary(model1)
+
+# extract results
+result1 <- data.frame(
+  Estimate = coef(model1),
+  OR = exp(coef(model1)),
+  p_value = summary(model1)$coefficients[,4]
+)
+
+print(result1)
+```
+
+#### When K = 103
+
+```{r}
+# K = 103
+# fit logistic regression
+model2 <- glm(Diabetes ~ ., 
+             data = df_imp_2, 
+             family = binomial)
+
+summary(model2)
+
+# extract results
+result2 <- data.frame(
+  Estimate = coef(model2),
+  OR = exp(coef(model2)),
+  p_value = summary(model2)$coefficients[,4]
+)
+
+print(result2)
+```
+
+**Comparison**:
+
+(1) The most significant shift between K=7 and K=103 is in **Insulin**, where p-value changes from **0.091** to **0.003**, making result statistically significant.
+
+(2) Both models show that **Pregnancies, Glucose, BMI and DiabetesPedigreeFunction** have significant positive relationships with **Diabetes**.
+
+### Use decision tree to forecast diabetes.
+
+#### When K = 7
+
+```{r}
+
+df_imp_1$Diabetes <- factor(df_imp_1$Diabetes)
+
+# split into training and testing sets
+set.seed(123)
+data_split_1 <- initial_split(df_imp_1, prop = 0.75, strata = Diabetes)
+train_data_1 <- training(data_split_1)
+test_data_1 <- testing(data_split_1)
+
+# create decision tree specification
+tree_spec <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+# fit the model to the training data
+tree_fit <- tree_spec %>%
+  fit(Diabetes ~ ., data = train_data_1)
+
+# make predictions on the testing data
+predictions <- tree_fit %>%
+  predict(test_data_1) %>%
+  pull(.pred_class)
+
+# calculate evaluation results
+results_1 <- data.frame(
+  truth = test_data_1$Diabetes,
+  pred = predictions
+)
+
+# calculate metrics
+metric_set(accuracy, f_meas, yardstick::precision, yardstick::recall)(
+  results_1,
+  truth = truth,
+  estimate = pred,
+  event_level = "second"
+)
+
+cat("\n=== Confusion Matrix ===\n")
+cm_1 <- conf_mat(results_1, truth = truth, estimate = pred)
+cm_1
+
+```
+
+#### When K = 103
+
+```{r}
+
+df_imp_2$Diabetes <- factor(df_imp_2$Diabetes)
+
+# split into training and testing sets
+set.seed(123)
+data_split_2 <- initial_split(df_imp_2, prop = 0.75, strata = Diabetes)
+train_data_2 <- training(data_split_2)
+test_data_2 <- testing(data_split_2)
+
+# create decision tree specification
+tree_spec <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+# fit the model to the training data
+tree_fit <- tree_spec %>%
+  fit(Diabetes ~ ., data = train_data_2)
+
+# make predictions on the testing data
+predictions <- tree_fit %>%
+  predict(test_data_2) %>%
+  pull(.pred_class)
+
+# calculate evaluation results
+results_2 <- data.frame(
+  truth = test_data_2$Diabetes,
+  pred = predictions
+)
+
+# calculate metrics
+metric_set(accuracy, f_meas, yardstick::precision, yardstick::recall)(
+  results_2,
+  truth = truth,
+  estimate = pred,
+  event_level = "second"
+)
+
+cat("\n=== Confusion Matrix ===\n")
+cm_2 <- conf_mat(results_2, truth = truth, estimate = pred)
+cm_2
+
+```
+
+**Comparison**: **K=103** produces higher predictive performance than **K=7**. While **K=7** is statistically more realistic, the smoothed data from K=103, is more effective for maximizing predictive power by filtering out local noise.
+
+## Perform interative Linear Regression imputations
+
+```{r}
+df <- read.csv(filepath, header = TRUE)
+df$Diabetes <- as.factor(df$Diabetes)
+
+df_imp_LR <- hotdeck(df)
+
+# Store the locations of missing values in the original data
+missing_preg <- is.na(df$Pregnancies)
+missing_glu  <- is.na(df$Glucose)
+missing_bp   <- is.na(df$BloodPressure)
+missing_skin <- is.na(df$SkinThickness)
+missing_ins  <- is.na(df$Insulin)
+missing_bmi  <- is.na(df$BMI)
+
+# Iterative imputation
+n_iter <- 5
+
+for (i in 1:n_iter) {
+  cat("Iteration:", i, "\n")
+  
+  # Impute Pregnancies
+  df_imp_LR$Pregnancies[missing_preg] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    Pregnancies ~ Glucose + BloodPressure + SkinThickness + Insulin +
+      BMI + DiabetesPedigreeFunction + Age + Diabetes
+  )
+  
+  # Impute Glucose
+  df_imp_LR$Glucose[missing_glu] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    Glucose ~ Pregnancies + BloodPressure + SkinThickness + Insulin +
+      BMI + DiabetesPedigreeFunction + Age + Diabetes
+  )
+  
+  # Impute BloodPressure
+  df_imp_LR$BloodPressure[missing_bp] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    BloodPressure ~ Pregnancies + Glucose + SkinThickness + Insulin +
+      BMI + DiabetesPedigreeFunction + Age + Diabetes
+  )
+  
+  # Impute SkinThickness
+  df_imp_LR$SkinThickness[missing_skin] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    SkinThickness ~ Pregnancies + Glucose + BloodPressure + Insulin +
+      BMI + DiabetesPedigreeFunction + Age + Diabetes
+  )
+  
+  # Impute Insulin
+  df_imp_LR$Insulin[missing_ins] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    Insulin ~ Pregnancies + Glucose + BloodPressure + SkinThickness +
+      BMI + DiabetesPedigreeFunction + Age + Diabetes
+  )
+  
+  # Impute BMI
+  df_imp_LR$BMI[missing_bmi] <- NA
+  df_imp_LR <- impute_lm(
+    df_imp_LR,
+    BMI ~ Pregnancies + Glucose + BloodPressure + SkinThickness +
+      Insulin + DiabetesPedigreeFunction + Age + Diabetes
+  )
+}
+
+# Preview the imputed dataset
+head(df_imp_LR)
+
+```
+
+### Apply logistic regression to identify diabetes risk factors.
+
+```{r}
+model <- glm(Diabetes ~ ., 
+             data = df_imp_LR, 
+             family = binomial)
+summary(model)
+coef_table <- summary(model)$coefficients
+
+result <- data.frame(
+  Estimate = coef_table[, "Estimate"],
+  OR = exp(coef_table[, "Estimate"]),
+  p_value = coef_table[, "Pr(>|z|)"]
+)
+
+print(result)
+```
+
+### Use decision tree to forecast diabetes.
+
+```{r}
+set.seed(123)
+data_split_LR <- initial_split(df_imp_LR, prop = 0.75)
+train_data_LR <- training(data_split_LR)
+test_data_LR  <- testing(data_split_LR)
+```
+
+```{r}
+## training
+tree_spec <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_fit <- tree_spec %>%
+  fit(Diabetes ~ ., data = train_data_LR)
+```
+
+```{r}
+## evaluation
+rm(accuracy, f_meas, precision, recall)
+my_metrics <- metric_set(accuracy, f_meas, precision, recall)
+
+model_performance_LR <- tree_fit %>%
+  predict(test_data_LR, type = "class") %>%
+  bind_cols(test_data_LR) %>%
+  mutate(
+    Diabetes = factor(Diabetes, levels = c("no", "yes")),
+    .pred_class = factor(.pred_class, levels = c("no", "yes"))
+  ) %>%
+  my_metrics(truth = Diabetes, estimate = .pred_class, event_level = "second")
+
+print(model_performance_LR)
+```
